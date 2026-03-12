@@ -1,19 +1,47 @@
 ---
 title: "Practicum 2.1"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
 ---
 
-### Hypothesis: I believe we are able to distinguish between defensive and offensive players based on their skill attributes.
+# Hypothesis
 
+I believe we are able to distinguish between defensive and offensive players based on their skill attributes.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 11,
+  fig.height = 7
+)
+```
+
+```{r libraries}
 library(tidyverse)
+```
 
-players <- readr::read_csv("/Users/lukas/Documents/Skola/Ing./2. semester/OZNAL/Data/players_22.csv")
+# First look on availible data
+
+```{r load-data}
+players <- readr::read_csv("D:/Škola/Ing/2.semester/OZNAL/Data/players_22.csv")
 
 dim(players)
 glimpse(players)
+```
 
-## Result variable: I decided to choose a binary result variable which will evaluate to which class a players falls into: DEFENSIVE or OFFENSIVE
+# Response Variable Definition
 
+I decided to choose a binary response variable that evaluates whether a player falls into the `DEFENSIVE` or `OFFENSIVE` class.
+
+```{r inspect-positions}
 positions <- players %>%
   pull(club_position) %>%
   str_split(",") %>%
@@ -21,64 +49,386 @@ positions <- players %>%
   str_trim() %>%
   unique()
 
-positions    
+positions
+```
 
-## After listing all possible positions a player can be assigned, we need to filter out ones that don't express their offensive/defensive nature- for example, a goalkeeper is neither offensive or defensive, or midfielders without special assignment could mean both.
+After listing all positions, I removed all positions that do not clearly express offensive or defensive nature.
 
+```{r classify-players}
 offensive_pos <- c("ST", "CF", "LW", "RW", "CAM")
 defensive_pos <- c("CB", "LB", "RB", "LWB", "RWB", "CDM")
 
-
-## Here we distinguish which player positions fall into which class
-
 players_classified <- players %>%
-mutate(player_classification = case_when(
-  club_position %in% offensive_pos ~ "offensive",
-  club_position %in% defensive_pos ~ "defensive",
-  TRUE ~ NA_character_
-)) %>%
-filter(!is.na(player_classification))
+  mutate(
+    player_classification = case_when(
+      club_position %in% offensive_pos ~ "offensive",
+      club_position %in% defensive_pos ~ "defensive",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(player_classification))
 
 players_classified
 count(players_classified, player_classification)
+```
 
+Here we filter the dataset, so all ambiguous players are removed.
 
-## Here we filter out the dataset, so all ambiguous players are removed
-
+```{r class-balance}
 class_table <- players_classified %>%
   count(player_classification)
 
 class_table
 
-ggplot(class_table, aes(x = player_classification, y = n, fill = player_classification)) +
+ggplot(
+  class_table,
+  aes(x = player_classification, y = n, fill = player_classification)
+) +
   geom_col(width = 0.6) +
   labs(
     title = "Player count: offensive vs defensive",
     x = "Class",
     y = "Player count"
-  )
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
 
-## Visualisation of the count of players in offensive and defensive class based on the filtered out dataset
+# Attribute Overview
 
+Visualisation of the number of offensive and defensive players in the filtered dataset.
+
+```{r attribute-overview}
 cat(names(players_classified), sep = "\n")
 
-  attribute_overview <- players_classified %>%
-    summarise(across(
+attribute_summary_wide <- players_classified %>%
+  summarise(
+    across(
       everything(),
       list(
         type = ~ class(.x)[1],
         missing = ~ sum(is.na(.x)),
         unique_values = ~ n_distinct(.x, na.rm = TRUE),
-        example = ~ as.character(first(na.omit(.x)))
+        example = ~ .x %>% na.omit() %>% first() %>% as.character()
       ),
       .names = "{.col}__{.fn}"
-    )) %>%
-    pivot_longer(
-      cols = everything(),
-      names_to = c("attribute", ".value"),
-      names_sep = "__"
-    ) %>%
-    arrange(attribute)
+    )
+  )
 
-  attribute_overview
+attribute_overview <- attribute_summary_wide %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("attribute", ".value"),
+    names_sep = "__"
+  ) %>%
+  arrange(attribute)
 
+attribute_overview
+```
+
+# Initial Feature Selection
+
+For picking the right predictors, it is mandatory to choose attributes that could contribute to determining a class for each player.
+
+```{r selected-features}
+selected_features <- c(
+  "attacking_crossing",
+  "attacking_finishing",
+  "attacking_heading_accuracy",
+  "attacking_short_passing",
+  "attacking_volleys",
+  "defending_marking_awareness",
+  "defending_standing_tackle",
+  "defending_sliding_tackle",
+  "mentality_interceptions",
+  "mentality_positioning",
+  "mentality_vision",
+  "power_long_shots",
+  "power_shot_power",
+  "power_stamina",
+  "power_strength",
+  "skill_ball_control",
+  "skill_dribbling",
+  "skill_long_passing",
+  "movement_acceleration",
+  "movement_agility",
+  "movement_sprint_speed"
+)
+
+players_skill_predictors <- players_classified %>%
+  select(long_name, player_classification, all_of(selected_features))
+
+players_skill_predictors
+
+glimpse(players_skill_predictors)
+summary(players_skill_predictors)
+```
+
+# Distribution of Selected Features
+
+
+
+```{r selected-features-long}
+player_skill_per_row <- players_skill_predictors %>%
+  pivot_longer(
+    cols = all_of(selected_features),
+    names_to = "feature",
+    values_to = "value"
+  )
+```
+
+Histograms show how the selected features are distributed by class.
+
+```{r selected-feature-histograms}
+ggplot(
+  player_skill_per_row,
+  aes(x = value, fill = player_classification)
+) +
+  geom_histogram(
+    alpha = 0.5,
+    bins = 20,
+    position = "identity"
+  ) +
+  facet_wrap(~ feature, scales = "free") +
+  labs(
+    title = "Histograms of selected features by player classification",
+    x = "Feature value",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+Boxplots help visualise the position and overlap of interquartile ranges between offensive and defensive classes.
+
+```{r selected-feature-boxplots}
+ggplot(
+  player_skill_per_row,
+  aes(x = player_classification, y = value, fill = player_classification)
+) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  facet_wrap(~ feature, scales = "free_y") +
+  labs(
+    title = "Selected skill predictors by classification",
+    x = "Player classification",
+    y = "Skill predictor value"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 8)
+  )
+```
+
+# Top Feature Candidates
+
+Top feature candidates were chosen based on the visualised distributions. Secondary features were kept as backups in case some top features had high correlation.
+
+```{r top-and-secondary-features}
+top_features <- c(
+  "attacking_finishing",
+  "attacking_volleys",
+  "defending_marking_awareness",
+  "defending_sliding_tackle",
+  "defending_standing_tackle",
+  "mentality_interceptions",
+  "mentality_positioning",
+  "power_long_shots",
+  "power_shot_power",
+  "skill_ball_control",
+  "skill_dribbling"
+)
+
+secondary_features <- c(
+  "attacking_short_passing",
+  "mentality_vision",
+  "movement_acceleration",
+  "movement_agility",
+  "movement_sprint_speed"
+)
+```
+
+# Pairwise Relationships of Top Features
+
+The `pairs()` plot gives a direct view of pairwise relationships between the strongest candidate predictors.
+
+```{r top-feature-pairs, fig.width=12, fig.height=12}
+pairs_data <- players_classified %>%
+  select(player_classification, all_of(top_features))
+
+pairs_colors <- ifelse(
+  pairs_data$player_classification == "defensive",
+  "tomato",
+  "steelblue"
+)
+
+pairs(
+  pairs_data %>% select(-player_classification),
+  col = pairs_colors,
+  pch = 19,
+  cex = 0.45,
+  main = "Pairs plot of top candidate features"
+)
+```
+
+# Correlation Matrix of Top Features
+
+A correlation matrix is great to check and visualize redundancy and multicollinearity.
+
+```{r top-feature-correlations}
+top_feature_correlations <- players_skill_predictors %>%
+  select(all_of(top_features)) %>%
+  cor(use = "pairwise.complete.obs")
+
+top_feature_correlations
+```
+
+```{r top-feature-correlation-heatmap}
+top_feature_correlations_long <- top_feature_correlations %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "feature_1") %>%
+  pivot_longer(
+    cols = -feature_1,
+    names_to = "feature_2",
+    values_to = "correlation"
+  )
+
+ggplot(
+  top_feature_correlations_long,
+  aes(x = feature_1, y = feature_2, fill = correlation)
+) +
+  geom_tile() +
+  geom_text(aes(label = round(correlation, 2)), size = 3) +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Correlation matrix of top features",
+    x = NULL,
+    y = NULL,
+    fill = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+```
+
+The correlation heatmap showed many strongly correlating predictors in certain skill groups. To reduce redundancy and avoid severe multicollinearity, it is necessary to choose only one representative predictor from each group.
+
+# Final Features
+
+```{r final-features}
+final_features <- c(
+  "attacking_finishing",
+  "defending_standing_tackle",
+  "mentality_interceptions",
+  "mentality_positioning",
+  "skill_dribbling"
+)
+
+players_final_features <- players_classified %>%
+  select(player_classification, all_of(final_features))
+
+players_final_features_long <- players_final_features %>%
+  pivot_longer(
+    cols = all_of(final_features),
+    names_to = "feature",
+    values_to = "value"
+  )
+```
+
+# Correlation Matrix of Final Features
+
+```{r final-feature-correlations}
+final_feature_correlations <- players_final_features %>%
+  select(all_of(final_features)) %>%
+  cor(use = "pairwise.complete.obs")
+
+final_feature_correlations
+```
+
+```{r final-feature-correlation-heatmap}
+final_feature_correlations_long <- final_feature_correlations %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "feature_1") %>%
+  pivot_longer(
+    cols = -feature_1,
+    names_to = "feature_2",
+    values_to = "correlation"
+  )
+
+ggplot(
+  final_feature_correlations_long,
+  aes(x = feature_1, y = feature_2, fill = correlation)
+) +
+  geom_tile() +
+  geom_text(aes(label = round(correlation, 2)), size = 3) +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Correlation matrix of final features",
+    x = NULL,
+    y = NULL,
+    fill = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+```
+
+The final predictors now consist of representative features for skill groups and features that are easily interpretable.
+
+# QQ Plots of Final Features
+
+```{r qq-plots-final-features}
+ggplot(players_final_features_long, aes(sample = value)) +
+  stat_qq(size = 0.5, alpha = 0.5, color = "#1f4e79") +
+  stat_qq_line(color = "#b22222", linewidth = 0.4) +
+  facet_wrap(~ feature, scales = "free") +
+  labs(
+    title = "QQ plots of final features",
+    x = "Theoretical quantiles",
+    y = "Sample quantiles"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 8)
+  )
+```
+
+Based on a visual QQ plot normality check, I think models other than LDA or QDA can perform better because a few predictors do not show very good normality.
+
+# Pairwise Relationships of Final Features
+
+```{r final-feature-pairs, fig.width=9, fig.height=9}
+final_pairs_data <- players_classified %>%
+  select(player_classification, all_of(final_features))
+
+final_pairs_colors <- ifelse(
+  final_pairs_data$player_classification == "defensive",
+  "tomato",
+  "steelblue"
+)
+
+pairs(
+  final_pairs_data %>% select(-player_classification),
+  col = final_pairs_colors,
+  pch = 19,
+  cex = 0.45,
+  main = "Pairs plot of final features"
+)
+```
+
+# Model Choice
+
+After consideration, the main difference I see between Logistic Regression and SVM is the need to handle non-linear relationships. Based on these pair plots, most features seem to be separable in a mostly linear way, so I think Logistic Regression is the ideal first choice. If there are performance issues, SVM can be tested as a follow-up experiment.
