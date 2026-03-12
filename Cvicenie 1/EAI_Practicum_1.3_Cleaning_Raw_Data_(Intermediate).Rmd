@@ -1,0 +1,171 @@
+---
+title: 'Elements of AI Practicum 1.3'
+subtitle: 'Cleaning Raw Data (Intermediate)'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    highlight: kate
+    toc_depth: 4
+  pdf_document:
+    toc: no
+version: 2025.2.AI
+---
+
+### Goal
+Create a reusable data-cleaning pipeline for the messy FIFA21 raw dataset.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+
+raw_path <- "fifa21_raw_data.csv"
+raw_path <- c(raw_path, file.path("Cvicenie 1", raw_path)) %>%
+  purrr::keep(file.exists) %>%
+  purrr::pluck(1, .default = "fifa21_raw_data.csv")
+
+if (!file.exists(raw_path)) {
+  stop("Missing file: fifa21_raw_data.csv. Put the file into the same folder as this Rmd.")
+}
+
+raw_fifa21 <- readr::read_csv(raw_path, show_col_types = FALSE)
+```
+
+### 1) Initial Inspection
+
+```{r}
+dim(raw_fifa21)
+head(names(raw_fifa21), 30)
+glimpse(raw_fifa21)
+```
+
+### 2) Helper Parsers
+
+```{r}
+parse_money_eur <- function(x) {
+  x %>%
+    str_replace_all("\\n", "") %>%
+    str_replace_all("€", "") %>%
+    str_trim() %>%
+    {
+      multiplier <- case_when(
+        str_detect(., "M$") ~ 1e6,
+        str_detect(., "K$") ~ 1e3,
+        TRUE ~ 1
+      )
+      num <- str_remove(., "[MK]$") %>% as.numeric()
+      num * multiplier
+    }
+}
+
+parse_height_cm <- function(x) {
+  x_clean <- str_trim(x)
+  feet_inches <- str_match(x_clean, "^(\\d+)'(\\d+)\\\"")
+  cm_direct <- str_match(x_clean, "^(\\d+)cm$")
+
+  case_when(
+    !is.na(feet_inches[, 1]) ~ as.numeric(feet_inches[, 2]) * 30.48 + as.numeric(feet_inches[, 3]) * 2.54,
+    !is.na(cm_direct[, 1]) ~ as.numeric(cm_direct[, 2]),
+    TRUE ~ suppressWarnings(as.numeric(x_clean))
+  )
+}
+
+parse_weight_kg <- function(x) {
+  x_clean <- str_trim(x)
+  lbs_match <- str_match(x_clean, "^(\\d+)lbs$")
+  kg_match <- str_match(x_clean, "^(\\d+)kg$")
+
+  case_when(
+    !is.na(lbs_match[, 1]) ~ as.numeric(lbs_match[, 2]) * 0.453592,
+    !is.na(kg_match[, 1]) ~ as.numeric(kg_match[, 2]),
+    TRUE ~ suppressWarnings(as.numeric(x_clean))
+  )
+}
+```
+
+### 3) Standardize Column Names and Remove Newline Characters
+
+```{r}
+clean_names <- names(raw_fifa21) %>%
+  str_replace_all("\\n", " ") %>%
+  str_replace_all("&", " and ") %>%
+  str_replace_all("[^A-Za-z0-9]+", "_") %>%
+  str_replace_all("_+", "_") %>%
+  str_replace_all("^_|_$", "") %>%
+  str_to_lower()
+
+fifa21 <- raw_fifa21
+names(fifa21) <- clean_names
+
+fifa21 <- fifa21 %>%
+  mutate(across(where(is.character), ~str_replace_all(.x, "\\n", " ") %>% str_squish()))
+```
+
+### 4) Convert Money, Height and Weight
+
+```{r}
+money_cols <- intersect(c("value", "wage", "release_clause"), names(fifa21))
+
+fifa21 <- fifa21 %>%
+  mutate(across(any_of(money_cols), parse_money_eur))
+
+if ("height" %in% names(fifa21)) {
+  fifa21 <- fifa21 %>% mutate(height_cm = parse_height_cm(height))
+}
+
+if ("weight" %in% names(fifa21)) {
+  fifa21 <- fifa21 %>% mutate(weight_kg = parse_weight_kg(weight))
+}
+```
+
+### 5) Tidy `team_and_contract` and `joined`
+
+```{r}
+if ("team_and_contract" %in% names(fifa21)) {
+  fifa21 <- fifa21 %>%
+    tidyr::separate(team_and_contract,
+                    into = c("team_name", "contract_info"),
+                    sep = "\\s{2,}|,",
+                    extra = "merge",
+                    fill = "right")
+
+  fifa21 <- fifa21 %>%
+    mutate(contract_start = str_extract(contract_info, "\\d{4}(?= ~)"),
+           contract_end = str_extract(contract_info, "(?<=~ )\\d{4}"),
+           contract_start = as.integer(contract_start),
+           contract_end = as.integer(contract_end))
+}
+
+if ("joined" %in% names(fifa21)) {
+  fifa21 <- fifa21 %>%
+    mutate(joined_date = suppressWarnings(parse_date_time(joined,
+                                                          orders = c("b d, Y", "B d, Y", "Y-m-d", "d/m/Y"))))
+}
+```
+
+### 6) Additional Cleanup
+
+```{r}
+fifa21 <- fifa21 %>%
+  mutate(across(where(is.character), ~na_if(.x, ""))) %>%
+  distinct()
+
+summary_missing <- fifa21 %>%
+  summarise(across(everything(), ~sum(is.na(.x)))) %>%
+  pivot_longer(cols = everything(), names_to = "column", values_to = "na_count") %>%
+  arrange(desc(na_count))
+
+head(summary_missing, 20)
+```
+
+### 7) Save Clean Dataset
+
+```{r}
+output_path <- file.path(dirname(raw_path), "fifa21_cleaned.csv")
+readr::write_csv(fifa21, output_path)
+
+cat("Cleaned file saved to:", output_path, "\n")
+```
+
+### Notes
+This solution uses tidyverse functional patterns (`across`, vectorized parsers, conditional mutation) instead of imperative loops, matching the recommended style from tutorials.

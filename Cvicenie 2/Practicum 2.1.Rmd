@@ -1,0 +1,84 @@
+---
+title: "Practicum 2.1"
+output: html_document
+---
+
+### Hypothesis: I believe we are able to distinguish between defensive and offensive players based on their skill attributes.
+
+library(tidyverse)
+
+players <- readr::read_csv("/Users/lukas/Documents/Skola/Ing./2. semester/OZNAL/Data/players_22.csv")
+
+dim(players)
+glimpse(players)
+
+## Result variable: I decided to choose a binary result variable which will evaluate to which class a players falls into: DEFENSIVE or OFFENSIVE
+
+positions <- players %>%
+  pull(club_position) %>%
+  str_split(",") %>%
+  unlist() %>%
+  str_trim() %>%
+  unique()
+
+positions    
+
+## After listing all possible positions a player can be assigned, we need to filter out ones that don't express their offensive/defensive nature- for example, a goalkeeper is neither offensive or defensive, or midfielders without special assignment could mean both.
+
+offensive_pos <- c("ST", "CF", "LW", "RW", "CAM")
+defensive_pos <- c("CB", "LB", "RB", "LWB", "RWB", "CDM")
+
+
+## Here we distinguish which player positions fall into which class
+
+players_classified <- players %>%
+mutate(player_classification = case_when(
+  club_position %in% offensive_pos ~ "offensive",
+  club_position %in% defensive_pos ~ "defensive",
+  TRUE ~ NA_character_
+)) %>%
+filter(!is.na(player_classification))
+
+players_classified
+count(players_classified, player_classification)
+
+
+## Here we filter out the dataset, so all ambiguous players are removed
+
+class_table <- players_classified %>%
+  count(player_classification)
+
+class_table
+
+ggplot(class_table, aes(x = player_classification, y = n, fill = player_classification)) +
+  geom_col(width = 0.6) +
+  labs(
+    title = "Player count: offensive vs defensive",
+    x = "Class",
+    y = "Player count"
+  )
+
+## Visualisation of the count of players in offensive and defensive class based on the filtered out dataset
+
+cat(names(players_classified), sep = "\n")
+
+  attribute_overview <- players_classified %>%
+    summarise(across(
+      everything(),
+      list(
+        type = ~ class(.x)[1],
+        missing = ~ sum(is.na(.x)),
+        unique_values = ~ n_distinct(.x, na.rm = TRUE),
+        example = ~ as.character(first(na.omit(.x)))
+      ),
+      .names = "{.col}__{.fn}"
+    )) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = c("attribute", ".value"),
+      names_sep = "__"
+    ) %>%
+    arrange(attribute)
+
+  attribute_overview
+

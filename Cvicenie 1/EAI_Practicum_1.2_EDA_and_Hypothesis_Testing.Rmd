@@ -1,0 +1,155 @@
+---
+title: 'Elements of AI Practicum 1.2'
+subtitle: 'Exploratory Data Analysis and Hypothesis Testing'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    highlight: kate
+    toc_depth: 4
+  pdf_document:
+    toc: no
+version: 2025.2.AI
+---
+
+### Goal
+Test the hypothesis that left-footed players are engaged in offensive positions more often than right-footed players, and compare their market outcomes.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+
+data_path <- c("players_22.csv", file.path("Cvicenie 1", "players_22.csv")) %>%
+  purrr::keep(file.exists) %>%
+  purrr::pluck(1, .default = NULL)
+
+if (is.null(data_path)) {
+  stop("Missing file: players_22.csv")
+}
+
+fifa22 <- readr::read_csv(data_path, show_col_types = FALSE)
+
+offensive_positions <- c("LF", "CF", "RF", "LW", "RW", "LS", "ST", "RS")
+defensive_positions <- c("LWB", "RWB", "LCB", "CB", "RCB", "LB", "RB")
+midfield_positions <- c("LM", "LAM", "CM", "RM", "RAM", "CAM", "CDM", "DM", "LDM", "RDM")
+
+data_pos <- fifa22 %>%
+  mutate(primary_pos = stringr::str_trim(stringr::str_split_i(player_positions, ",", 1)),
+         pos_group = case_when(
+           primary_pos %in% offensive_positions ~ "Offense",
+           primary_pos %in% defensive_positions ~ "Defense",
+           primary_pos %in% midfield_positions ~ "Midfield",
+           primary_pos == "GK" ~ "Goalkeeper",
+           TRUE ~ "Other"
+         )) %>%
+  filter(pos_group != "Other")
+```
+
+### 1) Position Composition by Preferred Foot
+
+```{r}
+position_summary <- data_pos %>%
+  count(preferred_foot, pos_group, name = "count") %>%
+  group_by(preferred_foot) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()
+
+position_summary
+```
+
+```{r fig.height=4.2, fig.width=7}
+position_summary %>%
+  ggplot(aes(x = preferred_foot, y = count, fill = pos_group)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("Offense" = "#f28e2b",
+                               "Midfield" = "#4e79a7",
+                               "Defense" = "#59a14f",
+                               "Goalkeeper" = "#9c755f")) +
+  labs(title = "Position distribution by preferred foot",
+       x = "Preferred foot", y = "Share within foot group", fill = "Position group") +
+  theme_bw()
+```
+
+### 2) Statistical Test of the Hypothesis
+
+```{r}
+pos_table <- xtabs(~ preferred_foot + pos_group, data = data_pos)
+pos_table
+
+chisq_result <- chisq.test(pos_table)
+chisq_result
+```
+
+Interpretation: distribution differs significantly by preferred foot. In this dataset, left-footed players are not over-represented in offense; they are more concentrated in defensive positions.
+
+### 3) Market Value, Wages and Release Clauses
+
+```{r}
+market_summary <- data_pos %>%
+  group_by(preferred_foot) %>%
+  summarise(n = n(),
+            mean_value_eur = mean(value_eur, na.rm = TRUE),
+            median_value_eur = median(value_eur, na.rm = TRUE),
+            mean_wage_eur = mean(wage_eur, na.rm = TRUE),
+            mean_release_clause_eur = mean(release_clause_eur, na.rm = TRUE),
+            .groups = "drop")
+
+market_summary
+```
+
+```{r}
+wilcox_value <- wilcox.test(value_eur ~ preferred_foot, data = data_pos)
+wilcox_wage <- wilcox.test(wage_eur ~ preferred_foot, data = data_pos)
+
+wilcox_value
+wilcox_wage
+```
+
+### 4) Young Players and Potential for Improvement
+
+```{r}
+young_players <- data_pos %>%
+  filter(age <= 23) %>%
+  mutate(growth_gap = potential - overall)
+
+young_summary <- young_players %>%
+  group_by(preferred_foot) %>%
+  summarise(n = n(),
+            mean_potential = mean(potential, na.rm = TRUE),
+            mean_overall = mean(overall, na.rm = TRUE),
+            mean_growth_gap = mean(growth_gap, na.rm = TRUE),
+            .groups = "drop")
+
+young_summary
+```
+
+```{r}
+test_growth <- t.test(growth_gap ~ preferred_foot, data = young_players)
+test_growth
+```
+
+### 5) Supporting Visualization
+
+```{r fig.height=4, fig.width=7}
+market_long <- data_pos %>%
+  select(preferred_foot, value_eur, wage_eur, release_clause_eur) %>%
+  pivot_longer(cols = c(value_eur, wage_eur, release_clause_eur),
+               names_to = "metric",
+               values_to = "amount")
+
+market_long %>%
+  ggplot(aes(x = preferred_foot, y = amount, fill = preferred_foot)) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  facet_wrap(~ metric, scales = "free_y") +
+  scale_fill_manual(values = c("Left" = "#3153a2", "Right" = "lightgrey")) +
+  labs(title = "Market metrics by preferred foot",
+       x = "Preferred foot", y = "EUR") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+### Conclusion
+- The hypothesis that left-footed players are more often offensive is not supported in this FIFA22 sample.
+- Left-footed players have slightly higher average market metrics (value and wage).
+- Young left-footed players have high potential too, but right-footed young players show a slightly larger average `potential - overall` gap.

@@ -1,0 +1,209 @@
+---
+title: 'Elements of AI Practicum 1.1'
+subtitle: 'Welcome to FIFA'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    highlight: kate
+    toc_depth: 4
+  pdf_document:
+    toc: no
+version: 2025.2.AI
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+data_path <- c("players_22.csv", file.path("Cvicenie 1", "players_22.csv")) %>%
+  purrr::keep(file.exists) %>%
+  purrr::pluck(1, .default = NULL)
+
+if (is.null(data_path)) {
+  stop("Missing file: players_22.csv")
+}
+
+fifa22 <- readr::read_csv(data_path, show_col_types = FALSE)
+```
+
+We believe that the most natural way to introduce you to data science is by exploring data, and by doing so you will learn something about the domain where data come from. For this task, we have chosen football, or as British and Americans call it, soccer.
+
+### Task 1
+Load `players_22.csv` into R.
+
+```{r}
+glimpse(fifa22)
+```
+
+### Task 2
+Determine the number of columns and rows, data labeling and heterogeneity.
+
+```{r}
+rows <- nrow(fifa22)
+columns <- ncol(fifa22)
+
+rows
+columns
+
+column_names <- names(fifa22)
+head(column_names, 15)
+
+unique(sapply(fifa22, class))
+```
+
+The data are labeled (column names are present) and heterogeneous (mixed column types), so it is not suitable for conversion to a single matrix without losing type information.
+
+### Task 3
+Count the number of different column types.
+
+```{r}
+col_types <- sapply(fifa22, class)
+table(col_types)
+```
+
+### Task 4
+Determine number of players with complete records.
+
+```{r}
+complete_players <- sum(complete.cases(fifa22))
+complete_players
+```
+
+The count is low because some columns are naturally sparse (`player_tags`, `player_traits`, loan and national-team columns, release clauses), so complete records are rare.
+
+### Task 5
+Detect duplicate rows and duplicate columns.
+
+```{r}
+dup_rows <- sum(duplicated(fifa22))
+dup_cols <- sum(duplicated(as.list(fifa22)))
+
+dup_rows
+dup_cols
+names(fifa22)[duplicated(as.list(fifa22))]
+```
+
+### Task 6
+Determine numeric ranges and enum choices.
+
+```{r}
+numeric_ranges <- fifa22 %>%
+  select(where(is.numeric)) %>%
+  summarise(across(everything(), list(min = ~min(.x, na.rm = TRUE),
+                                      max = ~max(.x, na.rm = TRUE))))
+
+numeric_ranges
+
+sample_enums <- fifa22 %>%
+  select(where(~is.character(.x) || is.factor(.x))) %>%
+  summarise(across(everything(), ~n_distinct(.x, na.rm = TRUE)))
+
+sample_enums
+```
+
+### Task 7
+Inspect structure and discuss information layout.
+
+```{r}
+head(names(fifa22), 25)
+tail(names(fifa22), 40)
+```
+
+The first columns are mostly identifiers, biography and club/team metadata. The later columns are mostly technical attributes (0-100 ratings). Non-informative fields for player quality modeling can include URLs and purely administrative IDs.
+
+### Task 8
+Find the player with the highest `overall` score.
+
+```{r}
+top_player <- fifa22 %>%
+  slice_max(overall, n = 1, with_ties = FALSE) %>%
+  select(short_name, long_name, age, nationality_name, overall,
+         player_positions, club_position, wage_eur, club_name)
+
+top_player
+```
+
+### Task 9
+Among top 100 players by `overall`, count left/right-footed players and proportions.
+
+```{r}
+foot_top100 <- fifa22 %>%
+  arrange(desc(overall)) %>%
+  slice_head(n = 100) %>%
+  count(preferred_foot, name = "count") %>%
+  mutate(proportion = count / sum(count))
+
+foot_top100
+```
+
+### Task 10
+Compare average `overall` of left-footed and right-footed players.
+
+
+overall_by_foot <- fifa22 %>%
+  group_by(preferred_foot) %>%
+  summarise(avg_overall = mean(overall, na.rm = TRUE),
+            n = n(),
+            .groups = "drop")
+
+overall_by_foot
+
+t.test(overall ~ preferred_foot, data = fifa22)
+
+Left-footed players have slightly higher average `overall` in this dataset.
+
+### Task 11
+Find the youngest left-footed player with `overall > 80`.
+
+young_elite_left <- fifa22 %>%
+  filter(preferred_foot == "Left", overall > 80) %>%
+  arrange(age, desc(overall)) %>%
+  select(short_name, age, overall, club_name, player_positions) %>%
+  slice(1)
+
+young_elite_left
+
+### Task 12
+Identify five least-valued left-footed players under 35 with highest potential improvement.
+
+left_value_growth <- fifa22 %>%
+  filter(preferred_foot == "Left", age < 35) %>%
+  mutate(improvement_potential = potential - overall) %>%
+  arrange(value_eur, desc(improvement_potential)) %>%
+  select(short_name, age, overall, potential, improvement_potential, value_eur, club_name) %>%
+  slice_head(n = 5)
+
+left_value_growth
+
+### Task 13
+Analyze additional attributes for left-footed players.
+
+best_left_dribbler <- fifa22 %>%
+  filter(preferred_foot == "Left") %>%
+  arrange(desc(skill_dribbling), desc(overall)) %>%
+  select(short_name, skill_dribbling, overall, club_name) %>%
+  slice(1)
+
+left_shooting_85_plus <- fifa22 %>%
+  filter(preferred_foot == "Left", shooting >= 85) %>%
+  summarise(count = n())
+
+best_left_curve <- fifa22 %>%
+  filter(preferred_foot == "Left") %>%
+  arrange(desc(skill_curve), desc(overall)) %>%
+  select(short_name, skill_curve, overall, club_name) %>%
+  slice(1)
+
+extra_left_metrics <- fifa22 %>%
+  filter(preferred_foot == "Left") %>%
+  summarise(mean_long_passing = mean(skill_long_passing, na.rm = TRUE),
+            mean_agility = mean(movement_agility, na.rm = TRUE),
+            mean_stamina = mean(power_stamina, na.rm = TRUE))
+
+best_left_dribbler
+left_shooting_85_plus
+best_left_curve
+extra_left_metrics
+
+### Closing Remarks
+Practicum 1.1 introduces exploratory analysis, basic inference and simple player profiling with tidyverse.
