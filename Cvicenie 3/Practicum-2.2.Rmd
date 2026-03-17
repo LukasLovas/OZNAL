@@ -1,0 +1,147 @@
+---
+title: "Practicum 2.2"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+# Hypothesis
+
+I hypothesize that a striker’s overall rating can be predicted from a set of selected technical, attacking, movement, and mentality-related attributes.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 11,
+  fig.height = 7
+)
+```
+
+```{r libraries}
+library(tidyverse)
+```
+
+# First look on availible data
+
+```{r load-data}
+players <- readr::read_csv("/Users/lukas/Documents/Skola/Ing./2. semester/OZNAL/Data/players_22.csv")
+
+dim(players)
+glimpse(players)
+cat(names(players), sep = "\n")
+```
+
+
+# Filtering players based on their position
+
+It is essential to only filter out players that play in attacking positions, as well as define a set of feature candidates that we will be filtering to find out which features are the most determining towards predicting the overall of a player.
+
+```{r}
+offensive_pos <- c("ST", "CF", "LW", "RW")
+
+strikers <- players %>%
+    filter(club_position %in% offensive_pos)
+
+target <- "overall"
+
+candidate_features <- c(
+  "attacking_finishing",
+  "attacking_heading_accuracy",
+  "attacking_short_passing",
+  "attacking_volleys",
+  "skill_dribbling",
+  "skill_ball_control",
+  "skill_long_passing",
+  "movement_acceleration",
+  "movement_sprint_speed",
+  "movement_agility",
+  "movement_reactions",
+  "movement_balance",
+  "power_shot_power",
+  "power_jumping",
+  "power_stamina",
+  "power_strength",
+  "power_long_shots",
+  "mentality_positioning",
+  "mentality_vision",
+  "mentality_composure",
+  "mentality_aggression"
+)
+
+strikers_candidate_features <- strikers %>%
+  select(club_position, all_of(target), all_of(candidate_features)) %>%
+  drop_na()
+```
+
+```{r overall-eda}
+
+summary(strikers_candidate_features$overall)
+
+ggplot(strikers_candidate_features, aes(x = overall)) +
+  geom_histogram(binwidth = 1, fill = "#4e79a7", color = "white") +
+  labs(
+    title = "Histogram of feature 'overall'",
+    x = "Value",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+ggplot(strikers_candidate_features, aes(x = "", y = overall)) +
+  geom_boxplot(fill = "#f28e2b", width = 0.25) +
+  coord_flip() +
+  labs(
+    title = "Boxplot of feature 'overall'",
+    x = NULL,
+    y = "overall"
+  ) +
+  theme_minimal()
+```
+
+```{r candidate-features-eda, fig.width=14, fig.height=12}
+candidate_long <- strikers_candidate_features %>%
+  pivot_longer(
+    cols = all_of(candidate_features),
+    names_to = "feature",
+    values_to = "value"
+  )
+
+ggplot(candidate_long, aes(x = value)) +
+  geom_histogram(bins = 25, fill = "#4e79a7", color = "white") +
+  facet_wrap(~ feature, scales = "free") +
+  labs(
+    title = "Histograms of candidate features",
+    x = "Value",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+ggplot(candidate_long, aes(x = feature, y = value)) +
+  geom_boxplot(fill = "#f28e2b", outlier.alpha = 0.35) +
+  coord_flip() +
+  labs(
+    title = "Boxplots of candidate features",
+    x = "Feature",
+    y = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r predictor-vs-target-scatter, fig.width=14, fig.height=12}
+ggplot(candidate_long, aes(x = value, y = overall)) +
+  geom_point(alpha = 0.35, size = 0.9, color = "#4e79a7") +
+  geom_smooth(method = "lm", se = FALSE, color = "#d62728", linewidth = 0.5) +
+  facet_wrap(~ feature, scales = "free_x") +
+  labs(
+    title = "Scatterplots of predictors vs target feature 'overall'",
+    x = "Predictor value",
+    y = "overall"
+  ) +
+  theme_minimal()
+```
