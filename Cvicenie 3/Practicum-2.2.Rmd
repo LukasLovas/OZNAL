@@ -31,7 +31,11 @@ library(tidyverse)
 # First look on availible data
 
 ```{r load-data}
-players <- readr::read_csv("/Users/lukas/Documents/Skola/Ing./2. semester/OZNAL/Data/players_22.csv")
+setwd("D:/Škola/Ing/2.semester/OZNAL")
+## setwd("/Users/lukas/Documents/Skola/Ing./2. semester/OZNAL/")
+getwd()
+players <- readr::read_csv("Data/players_22.csv")
+
 
 dim(players)
 glimpse(players)
@@ -80,6 +84,10 @@ strikers_candidate_features <- strikers %>%
   drop_na()
 ```
 
+## Target value EDA
+
+The target variable should be inspected first, because shape, distribution and outliers can change how the regression model can be interpreted.
+
 ```{r overall-eda}
 
 summary(strikers_candidate_features$overall)
@@ -103,6 +111,8 @@ ggplot(strikers_candidate_features, aes(x = "", y = overall)) +
   ) +
   theme_minimal()
 ```
+
+Candidate predictors distribution should also be analysed. They are key to figuring out the relationship and other factors between predictors and target.
 
 ```{r candidate-features-eda, fig.width=14, fig.height=12}
 candidate_long <- strikers_candidate_features %>%
@@ -133,15 +143,223 @@ ggplot(candidate_long, aes(x = feature, y = value)) +
   theme_minimal()
 ```
 
+After separate analysis, scatterplots of both predictors and target reveal the relationship between the two. Predictors with a strong relationship to the target are sufficient to be used in the model fitting.
+
 ```{r predictor-vs-target-scatter, fig.width=14, fig.height=12}
 ggplot(candidate_long, aes(x = value, y = overall)) +
   geom_point(alpha = 0.35, size = 0.9, color = "#4e79a7") +
   geom_smooth(method = "lm", se = FALSE, color = "#d62728", linewidth = 0.5) +
+  geom_smooth(se = FALSE, color = "#11e669", linewidth = 0.5) +
   facet_wrap(~ feature, scales = "free_x") +
   labs(
-    title = "Scatterplots of predictors vs target feature 'overall'",
+    title = "Predictors vs target scaterplots'",
     x = "Predictor value",
-    y = "overall"
+    y = "Overall"
   ) +
   theme_minimal()
 ```
+
+# Correlation matrix of predictors
+
+Using a correlation matrix can identify strongly similar predictors that in combination wouldn't necessarilly help the model estimate the target any better and would only overfit the model and make it less interpretable.
+
+```{r predictor-correlation-matrix, fig.width=14, fig.height=12}
+predictor_correlation_matrix <- strikers_candidate_features %>%
+  select(all_of(candidate_features)) %>%
+  cor()
+
+predictor_correlation_matrix
+
+predictor_correlation_long <- predictor_correlation_matrix %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "feature_1") %>%
+  pivot_longer(
+    cols = -feature_1,
+    names_to = "feature_2",
+    values_to = "correlation"
+  )
+
+ggplot(
+  predictor_correlation_long,
+  aes(x = feature_1, y = feature_2, fill = correlation)
+) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(correlation, 2)), size = 2.7) +
+  scale_fill_gradient2(
+    low = "#4575b4",
+    mid = "white",
+    high = "#d73027",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Correlation matrix of candidate predictors",
+    x = "Predictor",
+    y = "Predictor",
+    fill = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Based on the scatterplots, a few predictors show visible positive relationship with the target variable. Correlation analysis shows some redundancy among predictors, so the feature set was also reduced.
+
+```{r feature-reduction, fig.width=14, fig.height=12}
+selected_features <- c(
+  "attacking_finishing",
+  "skill_dribbling",
+  "movement_reactions",
+  "power_long_shots"
+)
+```
+
+# Final modeling dataset
+
+```{r model-data}
+model_data <- strikers_candidate_features %>%
+  select(all_of(target), all_of(selected_features))
+
+glimpse(model_data)
+summary(model_data)
+```
+
+# Multiple linear regression model
+
+After selecting strong candidates to be fit to the model, a multiple linear regression model is applied to predict the target variable from the selected predictors.
+
+```{r linear-model}
+overall_model <- lm(
+  overall ~ attacking_finishing + skill_dribbling + movement_reactions + power_long_shots,
+  data = model_data
+)
+
+summary(overall_model)
+```
+
+# Fitted values and residuals
+
+Observed and fitted values can be compared to see whether the model approprietly predicts the real values. Residuals also show what the difference is between a predicted and real value.
+
+```{r observed-vs-fitted}
+model_results <- model_data %>%
+  mutate(
+    fitted = predict(overall_model),
+    residuals = residuals(overall_model)
+  )
+
+ggplot(model_results, aes(x = overall, y = fitted)) +
+  geom_point(alpha = 0.35, color = "#4e79a7") +
+  geom_abline(slope = 1, intercept = 0, color = "#d62728", linewidth = 0.8) +
+  labs(
+    title = "Observed vs fitted values",
+    x = "Observed overall",
+    y = "Fitted overall"
+  ) +
+  theme_minimal()
+```
+
+This scatterplot shows that the mapped values pretty much follow the trend with only a slight residuals. There also don't seem to be that many extremely distant predictions.
+
+# Model diagnostics
+
+Diagnostic plots are useful for checking linearity, homoscedasticity, normality of residuals, and whether the model contains influential observations.
+
+```{r model-diagnostics, fig.width=12, fig.height=10}
+par(mfrow = c(2, 2))
+plot(overall_model)
+par(mfrow = c(1, 1))
+```
+ The residuals seem to be very near the real target value, indicating an acceptable fit. The scale-location plot shows approximately constant variance which proves the model worked with data that had homoscedasticity, while the Q-Q plot shows that residuals were close to normal a normal distribution, with a slight curve towards the higher values of target value, which might suggest that the model or a certain predictor may benefit of a polynomial fitting. The leverage plot indicated very few highly influential points that could worsen the fitting. 
+
+# Multicollinearity check
+
+Since every model demands no severe multicollinearity among predictors, we can reveal these relationships using  variance inflation factors.
+
+```{r vif-check, fig.width=14, fig.height=12}
+library(car)
+vif(overall_model)
+```
+
+The VIF score seems to be near the 2-3 range, which means there is only a small risk of these predicors to be collinear between each other.
+
+# Polynomial check
+
+Before accepting the linear model, it is needed to check whether a polynomial model improves the fit. This helps assess whether the predictor-target relationships might better ressemble a curved line rather than a straight linear line.
+
+```{r quadratic-model, fig.width=14, fig.height=12}
+overall_model_poly <- lm(
+  overall ~
+    poly(attacking_finishing, 2, raw = TRUE) +
+    poly(skill_dribbling, 2, raw = TRUE) +
+    poly(movement_reactions, 2, raw = TRUE) +
+    poly(power_long_shots, 2, raw = TRUE),
+  data = model_data
+)
+
+summary(overall_model_poly)
+```
+
+```{r cubic-model, fig.width=14, fig.height=12}
+overall_model_cube <- lm(
+  overall ~
+    poly(attacking_finishing, 3, raw = TRUE) +
+    poly(skill_dribbling, 3, raw = TRUE) +
+    poly(movement_reactions, 3, raw = TRUE) +
+    poly(power_long_shots, 3, raw = TRUE),
+  data = model_data
+)
+
+summary(overall_model_poly)
+```
+
+
+```{r anova, fig.width=14, fig.height=12}
+anova(overall_model, overall_model_poly, overall_model_cube)
+
+```
+
+
+The next plot compares the linear, quadratic and cubic trends for each selected predictor.
+
+```{r polynomial-check-plot, fig.width=14, fig.height=12}
+model_long <- model_data %>%
+  pivot_longer(
+    cols = all_of(selected_features),
+    names_to = "feature",
+    values_to = "value"
+  )
+
+ggplot(model_long, aes(x = value, y = overall)) +
+  geom_point(alpha = 0.25, size = 0.8, color = "#4e79a7") +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "#d62728",
+    linewidth = 0.7
+  ) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 2),
+    se = FALSE,
+    color = "#2ca02c",
+    linewidth = 0.7
+  ) +
+    geom_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 3),
+    se = FALSE,
+    color = "#f100dd",
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ feature, scales = "free_x") +
+  labs(
+    title = "Linear vs quadratic vs cubic trend check",
+    x = "Predictor value",
+    y = "Overall"
+  ) +
+  theme_minimal()
+```
+
+According to the Analysis of Variance and the scatterplot with all model trends, we can see that both polynomial models fit the distribution better, with the quadratic being majorly better fit, and the cubic model brings only a little bit of an upgrade. Especially visible with the major drop in Residual Square SUM (RSS), that drops significantly from degree 1 to 2, and only a little between 2-3. The F-statistic value also directly shows, that the significance of a slight upgrade in the cubic model isn't all that worth with explainability as a tradeoff. P-value similarly shows the same results. With all these values in mind, addition of the same number of parameters (4) between 2-3 is not at all worth with only a small difference in fitting quality, when between degree 1-2 with the same ammount of parameters added the results were a lot better. 
